@@ -930,7 +930,7 @@ mod tests {
         let m = monitor("0", 0, 0, 3024, 1964, 2.0);
         let mut ov = OverlayState { monitors: vec![m.clone()], ..Default::default() };
         assert!(!ov.in_capture("overlay-0"), "hidden between captures: reloading the page is enough");
-        assert!(ov.request_capture());
+        assert!(ov.request_capture(CaptureMode::Area));
         assert!(ov.in_capture("overlay-0"));
         assert!(!ov.in_capture("overlay-1"), "built for a monitor that is gone");
         ov.finishing = true;
