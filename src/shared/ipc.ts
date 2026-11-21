@@ -55,6 +55,10 @@ export interface Settings {
   theme: Theme;
   captureHotkey: string;
   smartPasteHotkey: string;
+  /** Opens the editor with the whole monitor under the pointer selected. Empty: turned off. */
+  fullScreenHotkey: string;
+  /** Saves the whole monitor under the pointer to the save folder, without the editor. Empty: turned off. */
+  fullScreenSaveHotkey: string;
   /** Ctrl+V (Cmd+V) does paste with text while WellSnap's own copy is on the clipboard. */
   ctrlVPaste: boolean;
   autostart: boolean;
@@ -121,6 +125,8 @@ export interface PreparePayload {
   setCount: number;
   setFull: boolean;
   captureMs: number;
+  /** The full screen hotkey: open with this whole monitor selected. Optional for older cores. */
+  selectAll?: boolean;
 }
 
 export interface Mark {
@@ -186,6 +192,13 @@ export interface HotkeyStatus {
   smartPasteRegistered: boolean;
   smartPasteError: string | null;
   smartPasteErrorKind: HotkeyErrorKind | null;
+  /** Not registered and no error while the key is turned off (empty). */
+  fullScreenRegistered: boolean;
+  fullScreenError: string | null;
+  fullScreenErrorKind: HotkeyErrorKind | null;
+  fullScreenSaveRegistered: boolean;
+  fullScreenSaveError: string | null;
+  fullScreenSaveErrorKind: HotkeyErrorKind | null;
 }
 
 export interface ContenderRef {

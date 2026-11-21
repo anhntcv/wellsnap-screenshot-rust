@@ -43,16 +43,33 @@ const PATHS = {
     </>
   ),
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />,
-  qr: <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18v2M18 14h2" />,
+  qr: (
+    <>
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18v2M18 14h2" />
+    </>
+  ),
   chevronLeft: <path d="M15 6l-6 6 6 6" />,
   chevronRight: <path d="M9 6l6 6-6 6" />,
-  alert: <path d="M12 4l9 16H3zM12 10v4M12 17h.01" />,
+  alert: <path d="M10.3 4.9a2 2 0 0 1 3.4 0l7.1 12.2a2 2 0 0 1-1.7 3H4.9a2 2 0 0 1-1.7-3zM12 10v3.5M12 16.8h.01" />,
   star: <path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" />,
-  message: <path d="M4 5h16v11H10l-6 4z" />,
+  message: <path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6l-4.5 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />,
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   reset: <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />,
-  shield: <path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z" />,
-  tray: <path d="M4 14h4l1 2h6l1-2h4M4 14l2-8h12l2 8v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />,
+  shield: (
+    <path d="M12 3c2.3 1.6 4.8 2.5 7.5 2.7a.6.6 0 0 1 .5.6V11c0 4.6-3.1 8.1-8 10-4.9-1.9-8-5.4-8-10V6.3a.6.6 0 0 1 .5-.6C7.2 5.5 9.7 4.6 12 3z" />
+  ),
+  lock: (
+    <>
+      <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+      <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5M12 14.5v2" />
+    </>
+  ),
+  tray: (
+    <path d="M4 14h4l1 2h6l1-2h4M6.4 5.5A2 2 0 0 1 8.3 4h7.4a2 2 0 0 1 1.9 1.5L20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4z" />
+  ),
   arrow: <path d="M6 18L18 6M9 6h9v9" />,
   code: <path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" />,
   refresh: <path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4" />,

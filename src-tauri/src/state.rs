@@ -31,6 +31,14 @@ pub struct HotkeyStatus {
     pub smart_paste_registered: bool,
     pub smart_paste_error: Option<String>,
     pub smart_paste_error_kind: Option<HotkeyErrorKind>,
+    /// Full screen into the editor; not registered and no error while the key is turned off (empty).
+    pub full_screen_registered: bool,
+    pub full_screen_error: Option<String>,
+    pub full_screen_error_kind: Option<HotkeyErrorKind>,
+    /// Full screen straight into a file.
+    pub full_screen_save_registered: bool,
+    pub full_screen_save_error: Option<String>,
+    pub full_screen_save_error_kind: Option<HotkeyErrorKind>,
 }
 
 /// The last single screenshot copied with separate comment text: smart paste can then paste the text and the
@@ -124,6 +132,12 @@ mod tests {
                 "smartPasteRegistered": false,
                 "smartPasteError": null,
                 "smartPasteErrorKind": "reserved",
+                "fullScreenRegistered": false,
+                "fullScreenError": null,
+                "fullScreenErrorKind": null,
+                "fullScreenSaveRegistered": false,
+                "fullScreenSaveError": null,
+                "fullScreenSaveErrorKind": null,
             })
         );
         assert_eq!(serde_json::to_value(HotkeyErrorKind::Other).unwrap(), "other");

@@ -24,7 +24,7 @@ const ICONS: Record<Tab, IconName> = {
   screenshots: "image",
   support: "heart",
   feedback: "message",
-  privacy: "shield",
+  privacy: "lock",
   about: "info",
 };
 

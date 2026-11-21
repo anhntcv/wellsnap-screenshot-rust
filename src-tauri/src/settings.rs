@@ -71,6 +71,10 @@ pub struct Settings {
     pub capture_hotkey: String,
     /// Registered only while a snapshot set exists.
     pub smart_paste_hotkey: String,
+    /// Opens the editor with the whole monitor under the pointer already selected. Empty: turned off.
+    pub full_screen_hotkey: String,
+    /// Saves the whole monitor under the pointer to `save_dir` at once, without the editor. Empty: turned off.
+    pub full_screen_save_hotkey: String,
     /// Ctrl+V (Cmd+V) does smart paste while WellSnap's own copy is still on the clipboard (ctrl_v.rs).
     pub ctrl_v_paste: bool,
     pub autostart: bool,
@@ -115,6 +119,8 @@ impl Default for Settings {
             theme: Theme::System,
             capture_hotkey: default_capture_hotkey().to_string(),
             smart_paste_hotkey: default_smart_paste_hotkey().to_string(),
+            full_screen_hotkey: default_full_screen_hotkey().to_string(),
+            full_screen_save_hotkey: default_full_screen_save_hotkey().to_string(),
             ctrl_v_paste: true,
             autostart: true,
             save_dir: None,
@@ -148,6 +154,30 @@ pub fn default_smart_paste_hotkey() -> &'static str {
     if cfg!(target_os = "macos") { "Ctrl+Cmd+V" } else { "Super+Alt+V" }
 }
 
+/// macOS: next to the capture key (Cmd+Shift+2); Cmd+Shift+3/4/5 belong to the system. Windows: Greenshot's
+/// full screen key.
+pub fn default_full_screen_hotkey() -> &'static str {
+    if cfg!(target_os = "macos") { "Cmd+Shift+1" } else { "Ctrl+PrintScreen" }
+}
+
+/// Off on macOS, where the system's Cmd+Shift+3 already saves the whole screen to a file; Settings offers
+/// Cmd+Alt+Shift+1 to turn it on. Windows: the key Lightshot users give its "instant save of the fullscreen".
+pub fn default_full_screen_save_hotkey() -> &'static str {
+    if cfg!(target_os = "macos") { "" } else { "Shift+PrintScreen" }
+}
+
+/// The full screen keys came after the first releases. A settings file written before them belongs to someone
+/// who may already use another screenshot tool: taking Ctrl+PrintScreen or Shift+PrintScreen from Greenshot or
+/// Lightshot without asking would break it, so for them the keys stay off until turned on in Settings.
+fn turn_off_new_keys(settings: &mut Settings, raw: &serde_json::Value) {
+    if raw.get("fullScreenHotkey").is_none() {
+        settings.full_screen_hotkey.clear();
+    }
+    if raw.get("fullScreenSaveHotkey").is_none() {
+        settings.full_screen_save_hotkey.clear();
+    }
+}
+
 impl Settings {
     /// Clamp values that may have been edited by hand.
     pub fn sanitize(&mut self) {
@@ -157,6 +187,22 @@ impl Settings {
         }
         if self.smart_paste_hotkey.trim().is_empty() {
             self.smart_paste_hotkey = default_smart_paste_hotkey().to_string();
+        }
+        // The full screen keys may be empty on purpose: the user turned them off.
+        for hotkey in [&mut self.full_screen_hotkey, &mut self.full_screen_save_hotkey] {
+            if hotkey.trim().is_empty() {
+                hotkey.clear();
+            }
+        }
+        // They give way to the older keys, and saving gives way to the editor key: when Print Screen is taken
+        // and the capture key moves to Ctrl+PrintScreen, capture is what must keep working.
+        let clashes = |key: &str, others: &[&str]| others.iter().any(|other| crate::hotkeys::same_chord(key, other));
+        if clashes(&self.full_screen_hotkey, &[self.capture_hotkey.as_str(), self.smart_paste_hotkey.as_str()]) {
+            self.full_screen_hotkey.clear();
+        }
+        let older = [self.capture_hotkey.as_str(), self.smart_paste_hotkey.as_str(), self.full_screen_hotkey.as_str()];
+        if clashes(&self.full_screen_save_hotkey, &older) {
+            self.full_screen_save_hotkey.clear();
         }
         if self.save_dir.as_deref().is_some_and(|dir| dir.trim().is_empty()) {
             self.save_dir = None;
@@ -174,8 +220,13 @@ pub fn settings_path(config_dir: &Path) -> PathBuf {
 /// Missing file gives defaults; a corrupt file is kept aside as settings.json.bad and replaced by defaults.
 pub fn load(path: &Path) -> Settings {
     let mut settings = match fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice::<Settings>(&bytes) {
-            Ok(s) => s,
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes)
+            .and_then(|raw| serde_json::from_value::<Settings>(raw.clone()).map(|s| (s, raw)))
+        {
+            Ok((mut s, raw)) => {
+                turn_off_new_keys(&mut s, &raw);
+                s
+            }
             Err(err) => {
                 log::warn!("settings file is corrupt ({err}), using defaults");
                 let _ = fs::rename(path, path.with_extension("json.bad"));
@@ -287,9 +338,55 @@ mod tests {
     fn default_hotkeys_are_valid_and_a_chosen_one_is_kept() {
         assert!(crate::hotkeys::validate(default_capture_hotkey()).is_ok());
         assert!(crate::hotkeys::validate(default_smart_paste_hotkey()).is_ok());
+        assert!(crate::hotkeys::validate(default_full_screen_hotkey()).is_ok());
+        let save = default_full_screen_save_hotkey();
+        assert!(save.is_empty() || crate::hotkeys::validate(save).is_ok(), "off on macOS, else valid");
         let mut s = Settings { smart_paste_hotkey: "Ctrl+Alt+V".into(), ..Default::default() };
         s.sanitize();
         assert_eq!(s.smart_paste_hotkey, "Ctrl+Alt+V", "the user may pick the old default on purpose");
+    }
+
+    #[test]
+    fn full_screen_keys_stay_off_for_files_written_before_them() {
+        let dir = temp_dir("settings-full-screen");
+        let path = settings_path(&dir);
+        // A new install has no file yet: the defaults.
+        assert_eq!(load(&path).full_screen_hotkey, default_full_screen_hotkey());
+        // An update: the file predates the keys.
+        fs::write(&path, r#"{"onboardingDone": true}"#).unwrap();
+        let old = load(&path);
+        assert_eq!(old.full_screen_hotkey, "");
+        assert_eq!(old.full_screen_save_hotkey, "");
+        // Turned on later, the choice is kept.
+        let on = Settings { full_screen_hotkey: "Cmd+Shift+1".into(), full_screen_save_hotkey: "F9".into(), ..old };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), on);
+        fs::write(&path, r#"{"fullScreenHotkey": "", "fullScreenSaveHotkey": "  "}"#).unwrap();
+        let off = load(&path);
+        assert_eq!(off.full_screen_hotkey, "", "an empty key stays off");
+        assert_eq!(off.full_screen_save_hotkey, "");
+        assert_eq!(off.capture_hotkey, default_capture_hotkey(), "unlike the capture key");
+    }
+
+    #[test]
+    fn full_screen_keys_give_way_to_the_capture_key() {
+        let mut s = Settings {
+            capture_hotkey: "Ctrl+PrintScreen".into(),
+            smart_paste_hotkey: "Super+Alt+V".into(),
+            full_screen_hotkey: "ctrl+printscreen".into(),
+            full_screen_save_hotkey: "Shift+PrintScreen".into(),
+            ..Default::default()
+        };
+        s.sanitize();
+        assert_eq!(s.capture_hotkey, "Ctrl+PrintScreen");
+        assert_eq!(s.full_screen_hotkey, "", "Print Screen was taken, capture moved here");
+        assert_eq!(s.full_screen_save_hotkey, "Shift+PrintScreen");
+        s.capture_hotkey = "Shift+PrintScreen".into();
+        s.sanitize();
+        assert_eq!(s.full_screen_save_hotkey, "");
+        let mut both = Settings { full_screen_hotkey: "F9".into(), full_screen_save_hotkey: "F9".into(), ..Default::default() };
+        both.sanitize();
+        assert_eq!((both.full_screen_hotkey.as_str(), both.full_screen_save_hotkey.as_str()), ("F9", ""));
     }
 
     #[test]

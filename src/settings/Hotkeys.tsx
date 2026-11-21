@@ -5,12 +5,12 @@ import type { TFunction } from "../shared/i18n";
 import { CaptureFix, ConflictCard, useConflicts } from "../shared/ui/ConflictCard";
 import { alternativeKey, captureAdvice, fixSteps, isTaken, suspectsOf, takenText } from "../shared/ui/conflicts";
 import { Button, Notice, Row, Switch } from "../shared/ui/controls";
-import { defaultHotkeys, formatAccelerator, sameAccelerator } from "../shared/ui/hotkey";
+import { defaultHotkeys, formatAccelerator, sameAccelerator, suggestedHotkeys } from "../shared/ui/hotkey";
 import { Icon } from "../shared/ui/icons";
 import { PrintScreenCard } from "../shared/ui/PrintScreenCard";
 import { PageHead } from "./General";
 import { HotkeyRecorder } from "./HotkeyRecorder";
-import { captureStatus, smartPasteStatus, type RowStatus } from "./hotkeyStatus";
+import { captureStatus, fullScreenSaveStatus, fullScreenStatus, smartPasteStatus, type RowStatus } from "./hotkeyStatus";
 import { openLink, pasteTargetsUrl } from "./links";
 import type { PageProps } from "./types";
 
@@ -18,6 +18,13 @@ interface Fix {
   steps: string[];
   alternative: string | null;
   onRecheck: () => Promise<void>;
+}
+
+/** Another hotkey row. An empty value is a key that is turned off; `yields`: it is turned off on a clash. */
+interface Other {
+  value: string;
+  label: string;
+  yields: boolean;
 }
 
 export function Hotkeys({ t, lang, platform, settings, info, update, refreshInfo }: PageProps) {
@@ -53,6 +60,22 @@ export function Hotkeys({ t, lang, platform, settings, info, update, refreshInfo
         }
       : undefined;
 
+  // A row refuses a combination another row already has, except that the full screen keys give way: when
+  // Print Screen is taken and capture moves to Ctrl+PrintScreen, the core turns the full screen key off
+  // (Settings::sanitize) and the row says so. Saving also gives way to the full screen editor key.
+  const assigned = {
+    capture: { value: settings.captureHotkey, label: t("settings.hotkeys.capture"), rank: 0 },
+    smartPaste: { value: settings.smartPasteHotkey, label: t("settings.hotkeys.smartPaste"), rank: 0 },
+    fullScreen: { value: settings.fullScreenHotkey, label: t("settings.hotkeys.fullScreen"), rank: 1 },
+    fullScreenSave: { value: settings.fullScreenSaveHotkey, label: t("settings.hotkeys.fullScreenSave"), rank: 2 },
+  };
+  type Assigned = keyof typeof assigned;
+  const othersThan = (own: Assigned): Other[] =>
+    (Object.keys(assigned) as Assigned[])
+      .filter((k) => k !== own)
+      .map((k) => ({ value: assigned[k].value, label: assigned[k].label, yields: assigned[k].rank > assigned[own].rank }));
+  const suggested = suggestedHotkeys(platform);
+
   return (
     <>
       <PageHead title={t("settings.hotkeys.title")} lead={t("settings.hotkeys.lead")} />
@@ -62,7 +85,7 @@ export function Hotkeys({ t, lang, platform, settings, info, update, refreshInfo
           description={t("settings.hotkeys.captureDesc")}
           value={settings.captureHotkey}
           fallback={defaults.capture}
-          other={{ value: settings.smartPasteHotkey, label: t("settings.hotkeys.smartPaste") }}
+          others={othersThan("capture")}
           offerPrintScreen={platform === "windows"}
           status={captureStatus(status)}
           statusText={takenText(advice, formatAccelerator(settings.captureHotkey, platform), t)}
@@ -70,6 +93,37 @@ export function Hotkeys({ t, lang, platform, settings, info, update, refreshInfo
           platform={platform}
           t={t}
           save={(captureHotkey) => update({ captureHotkey })}
+        />
+        <HotkeyRow
+          label={t("settings.hotkeys.fullScreen")}
+          description={t("settings.hotkeys.fullScreenDesc")}
+          value={settings.fullScreenHotkey}
+          fallback={defaults.fullScreen}
+          suggestion={suggested.fullScreen}
+          others={othersThan("fullScreen")}
+          canTurnOff
+          status={fullScreenStatus(status, settings.fullScreenHotkey)}
+          platform={platform}
+          t={t}
+          save={(fullScreenHotkey) => update({ fullScreenHotkey })}
+        />
+        <HotkeyRow
+          label={t("settings.hotkeys.fullScreenSave")}
+          description={
+            t("settings.hotkeys.fullScreenSaveDesc") +
+            (platform === "macos"
+              ? ` ${t("settings.hotkeys.fullScreenSaveMac", { shot3: formatAccelerator("Cmd+Shift+3", platform) })}`
+              : "")
+          }
+          value={settings.fullScreenSaveHotkey}
+          fallback={defaults.fullScreenSave}
+          suggestion={suggested.fullScreenSave}
+          others={othersThan("fullScreenSave")}
+          canTurnOff
+          status={fullScreenSaveStatus(status, settings.fullScreenSaveHotkey)}
+          platform={platform}
+          t={t}
+          save={(fullScreenSaveHotkey) => update({ fullScreenSaveHotkey })}
         />
         <HotkeyRow
           label={t("settings.hotkeys.smartPaste")}
@@ -82,7 +136,7 @@ export function Hotkeys({ t, lang, platform, settings, info, update, refreshInfo
           }
           value={settings.smartPasteHotkey}
           fallback={defaults.smartPaste}
-          other={{ value: settings.captureHotkey, label: t("settings.hotkeys.capture") }}
+          others={othersThan("smartPaste")}
           status={smartPasteStatus(status)}
           platform={platform}
           t={t}
@@ -133,8 +187,10 @@ function HotkeyRow({
   link,
   value,
   fallback,
-  other,
+  suggestion,
+  others,
   offerPrintScreen,
+  canTurnOff,
   status,
   statusText: ownerText,
   fix,
@@ -147,9 +203,14 @@ function HotkeyRow({
   /** Under the description, but not part of the recorder's accessible description. */
   link?: ReactNode;
   value: string;
+  /** The default; empty when the key is off by default (saving the full screen on macOS). */
   fallback: string;
-  other: { value: string; label: string };
+  /** What "Turn on" assigns while the key is off. */
+  suggestion?: string;
+  others: Other[];
   offerPrintScreen?: boolean;
+  /** Offers a button that turns the hotkey off (saves an empty value). */
+  canTurnOff?: boolean;
   status: RowStatus;
   /** Replaces the generic text, e.g. to name the program that holds the key. */
   statusText?: string | null;
@@ -159,17 +220,22 @@ function HotkeyRow({
   save: (accelerator: string) => Promise<boolean>;
 }) {
   const [error, setError] = useState<string | null>(null);
+  /** Which other key was turned off to make room for this one. */
+  const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const descId = useId();
 
-  /** Checks for a clash with the other hotkey and the syntax, then saves. Returns true when saved. */
+  /** Checks for a clash with the other hotkeys and the syntax, then saves. Returns true when saved. */
   const apply = async (accelerator: string): Promise<boolean> => {
+    setNote(null);
     if (sameAccelerator(accelerator, value, platform)) {
       setError(null);
       return true;
     }
-    if (sameAccelerator(accelerator, other.value, platform)) {
-      setError(t("settings.hotkeys.conflict", { action: other.label }));
+    const clashes = others.filter((o) => o.value && sameAccelerator(accelerator, o.value, platform));
+    const blocking = clashes.find((o) => !o.yields);
+    if (blocking) {
+      setError(t("settings.hotkeys.conflict", { action: blocking.label }));
       return false;
     }
     setBusy(true);
@@ -180,13 +246,35 @@ function HotkeyRow({
         setError(t("settings.hotkeys.invalid"));
         return false;
       }
+      // The core turns the yielding keys off when it saves (Settings::sanitize).
       const ok = await save(accelerator);
       setError(ok ? null : t("settings.hotkeys.saveFailed"));
+      if (ok && clashes.length > 0) {
+        // At most one: the full screen keys never share a combination.
+        setNote(t("settings.hotkeys.yielded", { hotkey: formatAccelerator(accelerator, platform), action: clashes[0].label }));
+      }
       return ok;
     } finally {
       setBusy(false);
     }
   };
+
+  /** An empty accelerator: the core registers nothing for it. */
+  const turnOff = async () => {
+    setNote(null);
+    setBusy(true);
+    try {
+      const ok = await save("");
+      setError(ok ? null : t("settings.hotkeys.saveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Not offered when another action holds the combination (e.g. capture moved to Ctrl+PrintScreen): the user
+  // records another one instead.
+  const offer = canTurnOff && !value ? fallback || suggestion || "" : "";
+  const turnOn = offer && !others.some((o) => o.value && sameAccelerator(offer, o.value, platform)) ? offer : "";
 
   const statusText =
     ownerText ??
@@ -238,22 +326,40 @@ function HotkeyRow({
                 {t("settings.hotkeys.usePrintScreen")}
               </Button>
             )}
-            {!sameAccelerator(value, fallback, platform) && (
-              <Button
-                size="s"
-                variant="ghost"
-                icon="reset"
-                disabled={busy}
-                title={t("settings.hotkeys.resetHint", { hotkey: formatAccelerator(fallback, platform) })}
-                onClick={() => apply(fallback)}
-              >
-                {t("settings.hotkeys.reset")}
+            {turnOn ? (
+              <Button size="s" variant="ghost" icon="check" disabled={busy} onClick={() => apply(turnOn)}>
+                {t("settings.hotkeys.turnOn", { hotkey: formatAccelerator(turnOn, platform) })}
+              </Button>
+            ) : (
+              fallback &&
+              value &&
+              !sameAccelerator(value, fallback, platform) && (
+                <Button
+                  size="s"
+                  variant="ghost"
+                  icon="reset"
+                  disabled={busy}
+                  title={t("settings.hotkeys.resetHint", { hotkey: formatAccelerator(fallback, platform) })}
+                  onClick={() => apply(fallback)}
+                >
+                  {t("settings.hotkeys.reset")}
+                </Button>
+              )
+            )}
+            {canTurnOff && value && (
+              <Button size="s" variant="ghost" icon="x" disabled={busy} onClick={turnOff}>
+                {t("settings.hotkeys.turnOff")}
               </Button>
             )}
           </div>
           {error ? (
             <p className="hotkey-status hotkey-status-error" role="alert">
               {error}
+            </p>
+          ) : note ? (
+            <p className="hotkey-status hotkey-status-idle" aria-live="polite">
+              <span className="status-dot" aria-hidden="true" />
+              {note}
             </p>
           ) : (
             statusText && (

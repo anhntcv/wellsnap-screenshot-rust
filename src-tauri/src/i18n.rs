@@ -47,6 +47,8 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
     let ru = lang == Lang::Ru;
     match key {
         "tray.capture" => if ru { "Сделать скриншот" } else { "Take screenshot" },
+        "tray.fullScreen" => if ru { "Скриншот всего экрана" } else { "Full screen screenshot" },
+        "tray.fullScreenSave" => if ru { "Сохранить весь экран в файл" } else { "Save full screen to a file" },
         "tray.strip" => if ru { "Показать ленту снимков" } else { "Show snapshot strip" },
         "tray.closePins" => if ru { "Закрыть закреплённые снимки ({count})" } else { "Close pinned screenshots ({count})" },
         "tray.settings" => if ru { "Настройки..." } else { "Settings..." },
@@ -67,6 +69,7 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         "toast.copied" => if ru { "Скопировано" } else { "Copied" },
         "toast.copiedAll" => if ru { "Скопированы все снимки" } else { "All screenshots copied" },
         "toast.saved" => if ru { "Сохранено" } else { "Saved" },
+        "toast.saveFailed" => if ru { "Не удалось сохранить снимок" } else { "Could not save the screenshot" },
         "toast.captureFailed" => if ru { "Не удалось сделать снимок экрана" } else { "Could not capture the screen" },
         "toast.textInClipboard" => if ru {
             "Картинки вставлены. Текст в буфере: вставьте его отдельным сообщением"

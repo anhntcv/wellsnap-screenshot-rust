@@ -30,6 +30,12 @@ const status = (patch: Partial<HotkeyStatus> = {}): HotkeyStatus => ({
   smartPasteRegistered: false,
   smartPasteError: null,
   smartPasteErrorKind: null,
+  fullScreenRegistered: false,
+  fullScreenError: null,
+  fullScreenErrorKind: null,
+  fullScreenSaveRegistered: false,
+  fullScreenSaveError: null,
+  fullScreenSaveErrorKind: null,
   ...patch,
 });
 const taken = status({ captureError: "HotKey already registered: PrintScreen", captureErrorKind: "taken" });

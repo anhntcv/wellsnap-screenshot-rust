@@ -121,6 +121,8 @@ fn keep_core_owned(mut merged: Settings, current: &mut Settings) -> Settings {
 fn apply_side_effects(app: &AppHandle, before: &Settings, after: &Settings) {
     if before.capture_hotkey != after.capture_hotkey
         || before.smart_paste_hotkey != after.smart_paste_hotkey
+        || before.full_screen_hotkey != after.full_screen_hotkey
+        || before.full_screen_save_hotkey != after.full_screen_save_hotkey
         || before.ctrl_v_paste != after.ctrl_v_paste
     {
         crate::hotkeys::apply(app);

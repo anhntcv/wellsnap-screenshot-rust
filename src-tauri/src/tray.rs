@@ -20,6 +20,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id().as_ref() {
             "capture" => crate::overlay::begin_capture(app),
+            "fullScreen" => crate::overlay::begin_full_screen(app),
+            "fullScreenSave" => crate::overlay::save_full_screen_after_menu(app),
             "fix" => crate::windows_ui::open_settings(app, Some("hotkeys")),
             "strip" => crate::windows_ui::sync_strip(app),
             "pins" => crate::pins::close_all(app),
@@ -68,6 +70,15 @@ fn make_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let capture_label = capture_label(lang, &settings.capture_hotkey, off);
 
     let capture = MenuItem::with_id(app, "capture", capture_label, true, None::<&str>)?;
+    let full_screen =
+        MenuItem::with_id(app, "fullScreen", action_label(lang, "tray.fullScreen", &settings.full_screen_hotkey), true, None::<&str>)?;
+    let full_screen_save = MenuItem::with_id(
+        app,
+        "fullScreenSave",
+        action_label(lang, "tray.fullScreenSave", &settings.full_screen_save_hotkey),
+        true,
+        None::<&str>,
+    )?;
     let fix = if off {
         let label = tr(lang, "tray.fixHotkey").replace("{hotkey}", &display_hotkey(&settings.capture_hotkey));
         Some(MenuItem::with_id(app, "fix", label, true, None::<&str>)?)
@@ -102,7 +113,7 @@ fn make_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     if let Some(fix) = &fix {
         items.push(fix);
     }
-    items.push(&strip);
+    items.extend([&full_screen as &dyn IsMenuItem<Wry>, &full_screen_save, &strip]);
     if let Some(pins) = &pins {
         items.push(pins);
     }
@@ -128,6 +139,15 @@ pub fn capture_label(lang: Lang, hotkey: &str, off: bool) -> String {
         tr(lang, "tray.captureOff").replace("{hotkey}", &hotkey)
     } else {
         format!("{} ({hotkey})", tr(lang, "tray.capture"))
+    }
+}
+
+/// "Full screen screenshot (⌘+Shift+1)"; just the action while its key is turned off (the item works anyway).
+pub fn action_label(lang: Lang, key: &str, hotkey: &str) -> String {
+    if hotkey.trim().is_empty() {
+        tr(lang, key).to_string()
+    } else {
+        format!("{} ({})", tr(lang, key), display_hotkey(hotkey))
     }
 }
 
@@ -164,6 +184,14 @@ mod tests {
         assert_eq!(capture_label(Lang::Ru, "PrintScreen", false), "Сделать скриншот (PrtSc)");
         assert_eq!(capture_label(Lang::En, "PrintScreen", true), "Take screenshot (PrtSc is not active)");
         assert_eq!(capture_label(Lang::Ru, "Ctrl+PrintScreen", true), "Сделать скриншот (Ctrl+PrtSc не работает)");
+    }
+
+    #[test]
+    fn full_screen_items_show_their_key_only_when_it_is_on() {
+        use super::action_label;
+        use crate::i18n::Lang;
+        assert_eq!(action_label(Lang::En, "tray.fullScreen", "Ctrl+PrintScreen"), "Full screen screenshot (Ctrl+PrtSc)");
+        assert_eq!(action_label(Lang::Ru, "tray.fullScreenSave", ""), "Сохранить весь экран в файл");
     }
 
     #[test]

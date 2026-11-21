@@ -1,5 +1,6 @@
-//! Global hotkeys: capture (always) and smart paste (only while there is something to paste: a snapshot set
-//! or a recent single copy with separate text), to keep the combination free for other apps otherwise.
+//! Global hotkeys: capture (always), the two full screen keys (always, unless turned off) and smart paste (only
+//! while there is something to paste: a snapshot set or a recent single copy with separate text), to keep the
+//! combination free for other apps otherwise.
 //!
 //! Every change runs on the main thread. The plugin's unregister_all holds its shortcut map lock while it waits
 //! for the main thread, and a hotkey press on the main thread takes the same lock, so calling it from a worker
@@ -121,9 +122,70 @@ fn apply_now(app: &AppHandle) {
     // Watched under the same condition as the smart paste hotkey; it also takes a press only while the
     // clipboard still holds WellSnap's copy.
     crate::ctrl_v::sync(app, has_content && settings.ctrl_v_paste);
+
+    // Always registered, like capture, unless turned off (empty).
+    let mut ours = vec![settings.capture_hotkey.as_str()];
+    if status.smart_paste_registered {
+        ours.push(settings.smart_paste_hotkey.as_str());
+    }
+    (status.full_screen_registered, status.full_screen_error) =
+        register_optional(app, "full screen", &settings.full_screen_hotkey, &ours, crate::overlay::begin_full_screen);
+    ours.push(settings.full_screen_hotkey.as_str());
+    (status.full_screen_save_registered, status.full_screen_save_error) = register_optional(
+        app,
+        "full screen save",
+        &settings.full_screen_save_hotkey,
+        &ours,
+        crate::overlay::save_full_screen,
+    );
+
     status.capture_error_kind = status.capture_error.as_deref().map(crate::conflicts::classify);
     status.smart_paste_error_kind = status.smart_paste_error.as_deref().map(crate::conflicts::classify);
+    status.full_screen_error_kind = status.full_screen_error.as_deref().map(crate::conflicts::classify);
+    status.full_screen_save_error_kind = status.full_screen_save_error.as_deref().map(crate::conflicts::classify);
     publish(app, status);
+}
+
+/// Registers a hotkey that may be turned off (empty accelerator). Returns whether it is registered and why not.
+/// A key another WellSnap action already holds is skipped: Settings refuses such a pair anyway.
+fn register_optional(
+    app: &AppHandle,
+    what: &str,
+    accelerator: &str,
+    ours: &[&str],
+    action: fn(&AppHandle),
+) -> (bool, Option<String>) {
+    if accelerator.trim().is_empty() {
+        return (false, None);
+    }
+    if is_reserved(accelerator) {
+        log::warn!("{what} hotkey {accelerator} is a clipboard shortcut, not registered");
+        return (false, Some(RESERVED.to_string()));
+    }
+    if ours.iter().any(|other| same_chord(accelerator, other)) {
+        log::warn!("{what} hotkey {accelerator} is used by another WellSnap action, not registered");
+        return (false, None);
+    }
+    let registered = app.global_shortcut().on_shortcut(accelerator, move |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            action(app);
+        }
+    });
+    match registered {
+        Ok(()) => (true, None),
+        Err(err) => {
+            log::warn!("{what} hotkey {accelerator} not registered: {err}");
+            (false, Some(err.to_string()))
+        }
+    }
+}
+
+/// The same key and modifiers, however written ("cmd+shift+1" and "Shift+Super+1").
+pub fn same_chord(a: &str, b: &str) -> bool {
+    match (Shortcut::from_str(a), Shortcut::from_str(b)) {
+        (Ok(a), Ok(b)) => a.mods == b.mods && a.key == b.key,
+        _ => false,
+    }
 }
 
 fn publish(app: &AppHandle, status: HotkeyStatus) {
@@ -154,7 +216,16 @@ pub fn validate(accelerator: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_reserved, validate};
+    use super::{is_reserved, same_chord, validate};
+
+    #[test]
+    fn same_chord_ignores_spelling() {
+        assert!(same_chord("cmd+shift+1", "Super+Shift+1"));
+        assert!(same_chord("Ctrl+PrintScreen", "ctrl+printscreen"));
+        assert!(!same_chord("Ctrl+PrintScreen", "Shift+PrintScreen"));
+        assert!(!same_chord("", "Ctrl+PrintScreen"), "a turned off key clashes with nothing");
+        assert!(!same_chord("garbage+", "garbage+"));
+    }
 
     #[test]
     fn accepts_default_accelerators() {

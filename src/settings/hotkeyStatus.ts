@@ -23,3 +23,16 @@ export function smartPasteStatus(s: HotkeyStatus | undefined): RowStatus {
   if (s.smartPasteRegistered) return "ok";
   return errorStatus(s.smartPasteErrorKind, s.smartPasteError) ?? "idle";
 }
+
+/** The full screen keys may be turned off (empty): then there is no status line at all. */
+export function fullScreenStatus(s: HotkeyStatus | undefined, accelerator: string): RowStatus {
+  if (!s || !accelerator) return null;
+  if (s.fullScreenRegistered) return "ok";
+  return errorStatus(s.fullScreenErrorKind ?? null, s.fullScreenError ?? null);
+}
+
+export function fullScreenSaveStatus(s: HotkeyStatus | undefined, accelerator: string): RowStatus {
+  if (!s || !accelerator) return null;
+  if (s.fullScreenSaveRegistered) return "ok";
+  return errorStatus(s.fullScreenSaveErrorKind ?? null, s.fullScreenSaveError ?? null);
+}

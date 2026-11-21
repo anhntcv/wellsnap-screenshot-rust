@@ -11,6 +11,7 @@ use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -49,7 +50,7 @@ pub struct OverlayState {
     pub last_used: Option<Instant>,
     /// Idle overlays are being destroyed; a capture requested meanwhile starts right after.
     pub releasing: bool,
-    pub pending_capture: bool,
+    pub pending_capture: Option<CaptureMode>,
     /// Windows: the overlay whose area is chosen. The other overlays are hidden, and it is clipped to its
     /// snapshot except while the area is moved or resized.
     pub live: Option<String>,
@@ -62,6 +63,14 @@ pub enum FrameTransport {
     Shared,
     /// Pixels are fetched from `wsnap://.../frame_path`.
     Protocol,
+}
+
+/// What a capture starts with: the user selects an area, or the whole monitor under the pointer is selected
+/// already (the full screen hotkey).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureMode {
+    Area,
+    FullScreen,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +89,8 @@ pub struct PreparePayload {
     pub set_count: usize,
     pub set_full: bool,
     pub capture_ms: f64,
+    /// The editor opens with this whole monitor selected (the full screen hotkey, monitor under the pointer).
+    pub select_all: bool,
 }
 
 /// Part of an overlay window that stays on screen: physical px from its top-left corner, corner radius.
@@ -177,18 +188,27 @@ pub fn on_page_loaded(app: &AppHandle, label: &str) {
 
 /// Entry point for the hotkey, tray and "new snapshot" buttons.
 pub fn begin_capture(app: &AppHandle) {
+    begin(app, CaptureMode::Area);
+}
+
+/// The full screen hotkey: the editor opens with the monitor under the pointer selected.
+pub fn begin_full_screen(app: &AppHandle) {
+    begin(app, CaptureMode::FullScreen);
+}
+
+fn begin(app: &AppHandle, mode: CaptureMode) {
     let state = app.state::<AppState>();
-    if !state.overlay.lock().unwrap().request_capture() {
+    if !state.overlay.lock().unwrap().request_capture(mode) {
         focus_live(app);
         return;
     }
     crate::telemetry::count("captures_started");
     let notice_hidden = crate::notice::hide_for_capture(app);
     let app = app.clone();
-    std::thread::spawn(move || run_capture(&app, notice_hidden));
+    std::thread::spawn(move || run_capture(&app, notice_hidden, mode));
 }
 
-fn run_capture(app: &AppHandle, notice_hidden: bool) {
+fn run_capture(app: &AppHandle, notice_hidden: bool, mode: CaptureMode) {
     let state = app.state::<AppState>();
     if !capture::has_permission() {
         crate::telemetry::count("capture_permission_denied");
@@ -240,6 +260,7 @@ fn run_capture(app: &AppHandle, notice_hidden: bool) {
                         set_count,
                         set_full,
                         capture_ms: frame.capture_ms,
+                        select_all: false,
                     });
                     ov.frames.insert(label, Arc::new(frame));
                 }
@@ -249,6 +270,12 @@ fn run_capture(app: &AppHandle, notice_hidden: bool) {
         let candidates: Vec<&MonitorInfo> =
             monitors.iter().filter(|m| prepared.iter().any(|p| p.label == label_for(m))).collect();
         ov.focus = focus_target(&candidates, cursor, monitor_rect);
+        if mode == CaptureMode::FullScreen {
+            // The overlay that takes the keyboard is the one under the pointer: that monitor is "the screen".
+            for p in prepared.iter_mut() {
+                p.select_all = ov.focus.as_deref() == Some(p.label.as_str());
+            }
+        }
         ov.capture_id
     };
 
@@ -292,6 +319,104 @@ fn run_capture(app: &AppHandle, notice_hidden: bool) {
             hide_all(&app);
         }
     });
+}
+
+/// One full screen save at a time, so a held key does not write a file per auto-repeat.
+static SAVING_FULL_SCREEN: AtomicBool = AtomicBool::new(false);
+
+/// The tray item: the menu is still fading out when its event arrives, and it must not end up in the file.
+/// The editor needs no wait: the user sees the frozen frame and can redo it.
+pub fn save_full_screen_after_menu(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        save_full_screen(&app);
+    });
+}
+
+/// The full screen save hotkey: the monitor under the pointer goes straight into a PNG file in the save
+/// folder, without the editor. Ignored while a capture is open (its overlay would be in the picture).
+pub fn save_full_screen(app: &AppHandle) {
+    if app.state::<AppState>().overlay.lock().unwrap().active {
+        focus_live(app);
+        return;
+    }
+    if SAVING_FULL_SCREEN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let notice_hidden = crate::notice::hide_for_capture(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result = save_full_screen_now(&app, notice_hidden);
+        SAVING_FULL_SCREEN.store(false, Ordering::SeqCst);
+        let state = app.state::<AppState>();
+        let lang = state.lang();
+        match result {
+            Ok(Some(path)) => {
+                log::info!("full screen saved to {}", path.display());
+                crate::notice::toast_with_detail(&app, crate::i18n::tr(lang, "toast.saved"), &path.to_string_lossy());
+            }
+            // Screen permission was requested; onboarding explains it.
+            Ok(None) => {}
+            Err(FullScreenError::PermissionDenied) => {
+                crate::telemetry::count("capture_permission_denied");
+                let hint = crate::i18n::tr(lang, "toast.screenPermissionHint");
+                crate::notice::toast_error(&app, crate::i18n::tr(lang, "toast.screenPermissionOff"), Some(hint));
+            }
+            Err(FullScreenError::Capture(err)) => {
+                log::error!("full screen capture failed: {err}");
+                crate::telemetry::count("capture_failed");
+                crate::notice::toast_error(&app, crate::i18n::tr(lang, "toast.captureFailed"), None);
+            }
+            Err(FullScreenError::Save(err)) => {
+                log::error!("full screen save failed: {err}");
+                crate::notice::toast_error(&app, crate::i18n::tr(lang, "toast.saveFailed"), Some(&err));
+            }
+        }
+    });
+}
+
+enum FullScreenError {
+    PermissionDenied,
+    Capture(String),
+    Save(String),
+}
+
+/// The saved file, or None when screen permission had to be requested first.
+fn save_full_screen_now(app: &AppHandle, notice_hidden: bool) -> Result<Option<std::path::PathBuf>, FullScreenError> {
+    if !capture::has_permission() {
+        crate::telemetry::count("capture_permission_denied");
+        capture::request_permission();
+        crate::windows_ui::open_onboarding(app);
+        return Ok(None);
+    }
+    if notice_hidden {
+        wait_for_screen_update();
+    }
+    let monitor = monitor_under_cursor(app).ok_or_else(|| FullScreenError::Capture("no monitor".into()))?;
+    let frame = capture::capture_monitor(&monitor).map_err(|err| match err {
+        capture::CaptureError::PermissionDenied => FullScreenError::PermissionDenied,
+        err => FullScreenError::Capture(err.to_string()),
+    })?;
+    // The "Saved" notice appears on the monitor that was saved.
+    app.state::<AppState>().overlay.lock().unwrap().last_monitor = Some(monitor);
+    let png = encode_png(&frame).map_err(FullScreenError::Save)?;
+    let dir = crate::actions::save_dir(app);
+    let stem = crate::export::timestamp_stem(chrono::Local::now());
+    crate::export::save_unique(&dir, &stem, "png", &png).map(Some).map_err(|e| FullScreenError::Save(e.to_string()))
+}
+
+/// Frames are opaque RGBA (capture/mod.rs). PNG whatever the format setting: JPEG is encoded by the editor's
+/// webview, which this path does not open.
+fn encode_png(frame: &Frame) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, frame.width, frame.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(&frame.rgba).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
 /// A notice was just hidden: let the compositor present that before the screen is copied, or the toast ends
@@ -604,7 +729,7 @@ fn release_if_idle(app: &AppHandle) {
         }
     }
     let overlays = has_overlays;
-    let mut pending = false;
+    let mut pending = None;
     if overlays {
         let windows: Vec<_> = app.webview_windows().into_iter().filter(|(label, _)| is_overlay_label(label)).collect();
         for (label, win) in &windows {
@@ -627,8 +752,8 @@ fn release_if_idle(app: &AppHandle) {
     if overlays || notice || strip {
         log::info!("released idle overlays (overlays: {overlays}, notice: {notice}, strip: {strip})");
     }
-    if pending {
-        begin_capture(app);
+    if let Some(mode) = pending {
+        begin(app, mode);
     }
 }
 
@@ -639,10 +764,10 @@ fn is_idle(last_used: Option<Instant>, now: Instant) -> bool {
 impl OverlayState {
     /// True when a capture starts now. While the idle release or an update holds the overlays, the request is
     /// kept in `pending_capture` for when they are given back.
-    fn request_capture(&mut self) -> bool {
+    fn request_capture(&mut self, mode: CaptureMode) -> bool {
         if self.active {
             if self.releasing {
-                self.pending_capture = true;
+                self.pending_capture = Some(mode);
             }
             return false;
         }
@@ -662,8 +787,8 @@ impl OverlayState {
         true
     }
 
-    /// Returns whether a capture was requested meanwhile.
-    fn end_update_claim(&mut self) -> bool {
+    /// Returns the capture requested meanwhile, if any.
+    fn end_update_claim(&mut self) -> Option<CaptureMode> {
         self.active = false;
         self.releasing = false;
         std::mem::take(&mut self.pending_capture)
@@ -702,8 +827,8 @@ pub fn try_claim_for_update(app: &AppHandle) -> bool {
 /// The install failed: give the overlays back and run a capture requested meanwhile.
 pub fn release_update_claim(app: &AppHandle) {
     let pending = app.state::<AppState>().overlay.lock().unwrap().end_update_claim();
-    if pending {
-        begin_capture(app);
+    if let Some(mode) = pending {
+        begin(app, mode);
     }
 }
 
@@ -758,20 +883,21 @@ mod tests {
         assert!(ov.claim_for_update());
         assert!(ov.active && ov.releasing);
         assert!(!ov.claim_for_update());
-        assert!(!ov.request_capture(), "a hotkey press while claimed waits");
-        assert!(ov.end_update_claim());
-        assert!(!ov.active && !ov.releasing && !ov.pending_capture);
+        assert!(!ov.request_capture(CaptureMode::FullScreen), "a hotkey press while claimed waits");
+        assert_eq!(ov.end_update_claim(), Some(CaptureMode::FullScreen), "and keeps its mode");
+        assert!(!ov.active && !ov.releasing && ov.pending_capture.is_none());
         assert!(ov.claim_for_update());
-        assert!(!ov.end_update_claim());
+        assert_eq!(ov.end_update_claim(), None);
     }
 
     #[test]
     fn a_capture_request_starts_one_capture() {
         let mut ov = OverlayState::default();
-        assert!(ov.request_capture());
+        assert!(ov.request_capture(CaptureMode::Area));
         assert!(ov.active && ov.started.is_some() && ov.last_used == ov.started);
-        assert!(!ov.request_capture(), "one capture at a time");
-        assert!(!ov.pending_capture, "a second press during a capture is dropped");
+        assert!(!ov.request_capture(CaptureMode::Area), "one capture at a time");
+        assert!(!ov.request_capture(CaptureMode::FullScreen), "whatever the mode");
+        assert!(ov.pending_capture.is_none(), "a second press during a capture is dropped");
     }
 
     #[test]

@@ -202,6 +202,26 @@ describe("ready reporting", () => {
   });
 });
 
+describe("full screen hotkey", () => {
+  it("opens with the whole monitor selected", () => {
+    editor.onFrame({ ...payload, selectAll: true }, new Uint8ClampedArray(0));
+    expect(editor.getView().selection).toMatchObject({ x: 0, y: 0, w: 800, h: 600 });
+    expect(editor.getView().settled).toBe(true);
+    // Drawing works at once, inside the selection.
+    editor.setTool("rect");
+    drag([150, 150], [250, 250]);
+    editor.closeInput();
+    expect(editor.getView().canUndo).toBe(true);
+  });
+
+  it("leaves the other monitors to select an area as usual", () => {
+    editor.onFrame({ ...payload, selectAll: false }, new Uint8ClampedArray(0));
+    expect(editor.getView().selection).toBeNull();
+    editor.onFrame(payload, new Uint8ClampedArray(0));
+    expect(editor.getView().selection).toBeNull();
+  });
+});
+
 describe("key auto-repeat", () => {
   it("does not let a held Esc walk on to discarding the snapshot", () => {
     withAnnotation();

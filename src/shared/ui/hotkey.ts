@@ -172,11 +172,26 @@ export function isReservedAccelerator(accel: string, platform: Platform): boolea
   return RESERVED_KEYS.some((key) => normalized === `${command}+${key}`);
 }
 
-export function defaultHotkeys(platform: Platform): { capture: string; smartPaste: string } {
-  // Not Ctrl+Alt+V on Windows: Office uses it for Paste Special.
+export function defaultHotkeys(platform: Platform): {
+  capture: string;
+  smartPaste: string;
+  fullScreen: string;
+  /** Empty on macOS: the system's Cmd+Shift+3 already saves the whole screen to a file. */
+  fullScreenSave: string;
+} {
+  // Not Ctrl+Alt+V on Windows: Office uses it for Paste Special. Same values as settings.rs.
   return platform === "macos"
-    ? { capture: "Cmd+Shift+2", smartPaste: "Ctrl+Cmd+V" }
-    : { capture: "PrintScreen", smartPaste: "Super+Alt+V" };
+    ? { capture: "Cmd+Shift+2", smartPaste: "Ctrl+Cmd+V", fullScreen: "Cmd+Shift+1", fullScreenSave: "" }
+    : { capture: "PrintScreen", smartPaste: "Super+Alt+V", fullScreen: "Ctrl+PrintScreen", fullScreenSave: "Shift+PrintScreen" };
+}
+
+/**
+ * What "Turn on" offers for a full screen key that is off: the default, or on macOS, where saving is off by
+ * default, the editor key with ⌥ ("the same, without the editor").
+ */
+export function suggestedHotkeys(platform: Platform): { fullScreen: string; fullScreenSave: string } {
+  const defaults = defaultHotkeys(platform);
+  return { fullScreen: defaults.fullScreen, fullScreenSave: defaults.fullScreenSave || "Cmd+Alt+Shift+1" };
 }
 
 const KEY_LABELS: Record<string, string> = {

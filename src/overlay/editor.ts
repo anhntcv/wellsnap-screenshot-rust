@@ -492,6 +492,12 @@ export class Editor {
     this.scale = this.computeScale(payload);
     this.phase = "idle";
     this.canvas.style.cursor = "crosshair";
+    // The full screen hotkey: the whole monitor is selected already, as after Ctrl+A (Cmd+A).
+    if (payload.selectAll) {
+      this.selection = { x: 0, y: 0, w: payload.width, h: payload.height };
+      this.phase = "ready";
+      this.requestRender();
+    }
     const gen = this.gen;
     // Read the pixels back once the frame is on screen; the loupe and the mosaic sample from them.
     requestAnimationFrame(() => window.setTimeout(() => gen === this.gen && this.ensurePixels(), 0));

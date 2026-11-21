@@ -39,9 +39,18 @@ pub fn open_settings(app: &AppHandle, tab: Option<&str>) {
         .visible(true)
         .focused(true)
         .build();
-    if let Err(err) = built {
-        log::error!("could not open settings: {err}");
+    match built {
+        Ok(win) => bring_to_front(&win),
+        Err(err) => log::error!("could not open settings: {err}"),
     }
+}
+
+/// A new window of a menu bar app (ActivationPolicy::Accessory on macOS) opens behind the frontmost app:
+/// `focused(true)` makes it key, but nothing activates WellSnap, so the first click on "Settings..." seemed to
+/// do nothing and only the second one (the existing-window branch, `set_focus`) brought it up. `set_focus`
+/// activates the app as well.
+fn bring_to_front(win: &tauri::WebviewWindow) {
+    let _ = win.set_focus();
 }
 
 pub fn open_onboarding(app: &AppHandle) {
@@ -61,8 +70,10 @@ pub fn open_onboarding(app: &AppHandle) {
             .center()
             .focused(true)
             .build();
-        if let Err(err) = built {
-            log::error!("could not open onboarding: {err}");
+        match built {
+            // Also opened from a capture hotkey when screen permission is missing, with another app in front.
+            Ok(win) => bring_to_front(&win),
+            Err(err) => log::error!("could not open onboarding: {err}"),
         }
     });
 }

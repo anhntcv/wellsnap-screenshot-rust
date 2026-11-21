@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceleratorParts,
   defaultHotkeys,
+  suggestedHotkeys,
   formatAccelerator,
   guessPlatform,
   isReservedAccelerator,
@@ -160,11 +161,24 @@ describe("accelerator comparison and display", () => {
   });
 
   it("knows the platform defaults", () => {
-    expect(defaultHotkeys("windows")).toEqual({ capture: "PrintScreen", smartPaste: "Super+Alt+V" });
+    expect(defaultHotkeys("windows")).toEqual({
+      capture: "PrintScreen",
+      smartPaste: "Super+Alt+V",
+      fullScreen: "Ctrl+PrintScreen",
+      fullScreenSave: "Shift+PrintScreen",
+    });
     expect(formatAccelerator(defaultHotkeys("windows").smartPaste, "windows")).toBe("Win+Alt+V");
     expect(isReservedAccelerator(defaultHotkeys("windows").smartPaste, "windows")).toBe(false);
     expect(isReservedAccelerator(defaultHotkeys("macos").smartPaste, "macos")).toBe(false);
-    expect(defaultHotkeys("macos")).toEqual({ capture: "Cmd+Shift+2", smartPaste: "Ctrl+Cmd+V" });
+    expect(defaultHotkeys("macos")).toEqual({
+      capture: "Cmd+Shift+2",
+      smartPaste: "Ctrl+Cmd+V",
+      fullScreen: "Cmd+Shift+1",
+      fullScreenSave: "",
+    });
+    expect(suggestedHotkeys("macos")).toEqual({ fullScreen: "Cmd+Shift+1", fullScreenSave: "Cmd+Alt+Shift+1" });
+    expect(suggestedHotkeys("windows")).toEqual({ fullScreen: "Ctrl+PrintScreen", fullScreenSave: "Shift+PrintScreen" });
+    expect(formatAccelerator(suggestedHotkeys("macos").fullScreenSave, "macos")).toBe("⌥⇧⌘1");
   });
 
   it("guesses the platform from the user agent", () => {
